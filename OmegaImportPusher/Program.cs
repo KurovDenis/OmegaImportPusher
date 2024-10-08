@@ -66,14 +66,30 @@ namespace OmegaImportPusher
                         return;
                     }
 
-                    // Добавление authToken в заголовок
+                    // Спрашиваем, сколько потоков создать
+                    Console.WriteLine("Сколько потоков выполнить?");
+                    if (!int.TryParse(Console.ReadLine(), out int threadCount) || threadCount <= 0)
+                    {
+                        Console.WriteLine("Некорректное число потоков. Попробуйте снова.");
+                        return;
+                    }
+
+                    // Добавление authToken в заголовок для всех потоков
                     client.DefaultRequestHeaders.Add("authToken", authToken);
 
-                    // Цикл для генерации сообщений
-                    for (int i = 0; i < messageCount; i++)
+                    // Запуск заданного количества потоков для выполнения запросов
+                    Task[] tasks = new Task[threadCount];
+
+                    for (int i = 0; i < threadCount; i++)
                     {
-                        string randomGuid = Guid.NewGuid().ToString();
-                        string xmlData = $@"
+                        // Для каждого потока создаем задачу
+                        tasks[i] = Task.Run(async () =>
+                        {
+                            // Цикл для генерации сообщений в рамках каждого потока
+                            for (int j = 0; j < messageCount / threadCount; j++)
+                            {
+                                string randomGuid = Guid.NewGuid().ToString();
+                                string xmlData = $@"
 <OmegaProduction>
     <Деталь>
         <внешний_код знач=""{randomGuid}"" />
@@ -95,32 +111,38 @@ namespace OmegaImportPusher
     </Деталь>
 </OmegaProduction>";
 
-                        var importData = new
-                        {
-                            xmlStr = xmlData,
-                            @params = new
-                            {
-                                logParams = new
+                                var importData = new
                                 {
-                                    AppendErrors = true,
-                                    AppendInfo = false,
-                                    AppendResults = true,
-                                    AppendWarnings = false
-                                },
-                                oneTransaction = false
+                                    xmlStr = xmlData,
+                                    @params = new
+                                    {
+                                        logParams = new
+                                        {
+                                            AppendErrors = true,
+                                            AppendInfo = false,
+                                            AppendResults = true,
+                                            AppendWarnings = false
+                                        },
+                                        oneTransaction = false
+                                    }
+                                };
+
+                                var importContent = new StringContent(JsonConvert.SerializeObject(importData), Encoding.UTF8, "application/json");
+
+                                Console.WriteLine($"[Поток {i + 1}] Отправка сообщения {j + 1} с GUID: {randomGuid}");
+
+                                HttpResponseMessage importResponse = await client.PostAsync(importUrl, importContent);
+                                importResponse.EnsureSuccessStatusCode();
+
+                                string importResponseBody = await importResponse.Content.ReadAsStringAsync();
+                                Console.WriteLine($"[Поток {i + 1}] Ответ: {importResponseBody}");
                             }
-                        };
-
-                        var importContent = new StringContent(JsonConvert.SerializeObject(importData), Encoding.UTF8, "application/json");
-
-                        Console.WriteLine($"Отправка сообщения {i + 1} с GUID: {randomGuid}");
-
-                        HttpResponseMessage importResponse = await client.PostAsync(importUrl, importContent);
-                        importResponse.EnsureSuccessStatusCode();
-
-                        string importResponseBody = await importResponse.Content.ReadAsStringAsync();
-                        Console.WriteLine(importResponseBody);
+                        });
                     }
+
+                    // Ожидание завершения всех потоков
+                    await Task.WhenAll(tasks);
+                    Console.WriteLine("Все потоки завершили работу.");
                 }
                 catch (HttpRequestException httpEx)
                 {
